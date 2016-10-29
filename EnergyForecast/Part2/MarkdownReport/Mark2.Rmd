@@ -1,0 +1,436 @@
+---
+title: "Energy Forecasting"
+author: "Sameer Lalit Lipsa"
+date: "October 27, 2016"
+output:
+  word_document:
+    toc: yes
+  html_document:
+    toc: yes
+---
+##1 Multiple-Linear Regression
+
+Multiple linear regression is the most common form of linear regression analysis.  As a predictive analysis, the multiple linear regression is used to explain the relationship between one continuous dependent variable from two or more independent variables.  The independent variables can be continuous or categorical (dummy coded as appropriate).
+
+###1.1 Applying Multiple-Linear Regression to our dataset
+
+####1.1.1 Dataset import and structure reset
+We will import and check the structure of our cleansed dataset to be used to build our model
+
+```{r, message=FALSE, warning=FALSE}
+setwd("D:/Fall 16/ADS/Git Repo Assignemnt 2- Team 7/EnergyForecast")
+mergeData <-  read.csv("MergedData.csv",header = TRUE)
+str(mergeData)
+```
+We would like to restructure some of the columns of the dataset and remove the unwanted columns, the datatypes of columns is understood intuitively by r, so we have to make sure the correct structure before proceeding for computation.
+
+```{r, message=FALSE, warning=FALSE}
+require(dplyr)
+mergeData <- mergeData %>% select(-c(X,Date,Account,Channel,Units,year))
+
+mergeData$hour <- as.numeric(mergeData$hour)
+mergeData$month <- as.numeric(mergeData$month)
+mergeData$Day.of.Week <-  as.numeric(mergeData$Day.of.Week)
+mergeData$weekday <-  as.numeric(mergeData$weekday)
+mergeData$PeakHour <- as.numeric(mergeData$PeakHour)
+mergeData$day <- as.numeric(mergeData$day)
+```
+We remove the categorical columns because it will not be useful in regression model and keeping subset of the data frame which only contains numeric features.
+```{r, message=FALSE, warning=FALSE}
+merge.sel <- subset(mergeData,select = -c(Conditions,Wind_Direction))
+# Re-Check the structure
+str(mergeData)
+```
+The structure of the dataset is now ready for computation.
+
+####1.1.2 Feature Transformation
+
+There are multiple methods of feature creation and data transformation. Often, finding the right transformation of your data can reveal relationships that would be difficult see otherwise, and may also make it easier for your model to separate classes. In the simple case of creating linear models for regression, this can take the form of squaring terms, taking their logarithm, or other functional transformations that bring the fundamental problem back into a linear relationship through the transformation.
+
+We will start by checking non linearity in the model. We will use the library psych
+
+* psych: Adapted from the help page for pairs, pairs.panels shows a scatter plot of matrices (SPLOM), with bi variate scatter plots below the diagonal, histograms on the diagonal, and the Pearson correlation above the diagonal.
+```{r, message=FALSE, warning=FALSE}
+require(psych)
+pairs.panels(merge.sel,col="red")
+```
+Using this plot we can identify the non linearity. To take a closer look we plot month.
+
+```{r, message=FALSE, warning=FALSE}
+plot(density(merge.sel$Kwh))
+```
+
+As seen from the distribution of KwH, we will use a log scale to convert the feature, which is nothing but our dependent variable.
+
+We plot again with transformed predictor i.e. KwH to check if the distribution still looks skewed as in last plot 
+
+```{r, message=FALSE, warning=FALSE}
+plot(density(log10(merge.sel$Kwh)))
+```
+
+The plot looks very much distributed to we will update the transformed predictor value in our dataset as well.
+
+```{r, message=FALSE, warning=FALSE}
+merge.sel$Kwh <- log10(merge.sel$Kwh)
+```
+Our next focus is to check other feature with respect to kwH and see the relationship. Lets check the histogram of Day and also the relationship with kwH
+```{r, message=FALSE, warning=FALSE}
+hist(merge.sel$hour, xlab = 'hour')
+```
+
+We plot this graph again using scatter.smooth() function.
+* scatter.smooth():Plot and add a smooth curve computed by loses to a scatter plot.
+```{r, message=FALSE, warning=FALSE}
+scatter.smooth(x=merge.sel$Kwh,y=merge.sel$hour,xlab = 'KwH', ylab = 'hour')
+```
+
+In r we have other methods for feature transformation, we find lambda transformation to be useful to demonstrate with `Day Of Week` parameter.
+
+* forecast library: Methods and tools for displaying and analyzing uni variate time series forecasts including exponential smoothing via state space models and automatic ARIMA modelling.
+
+* BoxCox.lambda(): It is procedure to identify an appropriate exponent (lambda) to transform the data to improve its normality.
+
+We use lambda transformation for `Day Of Week` and update the transformed value to our dataset.
+```{r, message=FALSE, warning=FALSE}
+library(forecast)
+lambda <- BoxCox.lambda(merge.sel$Day.of.Week)
+merge.sel$Day.of.Week <- BoxCox(merge.sel$Day.of.Week,lambda = lambda)
+```
+
+####1.1.3 Feature Selection
+Selecting the right features in your data can mean the difference between mediocre performance with long training times and great performance with short training times, thus we do feature selection.
+
+
+We will use leaps library for feature selection. leaps() performs an exhaustive search for the best subsets of the variables in x for predicting y in linear regression, using an efficient branch-and-bound algorithm. It is a compatibility wrapper for regsubsets does the same thing better.
+```{r, message=FALSE, warning=FALSE}
+library(leaps)
+```
+
+####1.1.3.1 Feature Selection Exhaustive Search
+
+* regsubsets(): Model selection by exhaustive search, forward or backward stepwise, or sequential replacement
+```{r, message=FALSE, warning=FALSE}
+regsubsets.out <- regsubsets(Kwh ~ ., data = merge.sel, nvmax = 14,method = "exhaustive")
+res <- summary(regsubsets.out)
+```
+The regsubsets()function has a built-in plot command which can display the selected variables for the "best" model with a given model selection statistic.  The top row of each plot contains a black square for each variable selected according to the optimal model associated with that statistic.  Examples using the R2 (unadjusted), adjusted R2, Mallow's Ck, and the BIC are shown as below.
+
+```{r, message=FALSE, warning=FALSE}
+plot(res$cp, main = "CP") 
+```
+```{r, message=FALSE, warning=FALSE}
+plot(regsubsets.out, scale = "adjr2", main = "Adjusted R^2")
+```
+```{r, message=FALSE, warning=FALSE}
+plot(regsubsets.out, scale = "bic", main = "BIC")
+```
+```{r, message=FALSE, warning=FALSE}
+plot(res$adjr2, main = "adj r^2")
+```
+```{r, message=FALSE, warning=FALSE}
+coef(regsubsets.out,10)
+res$adjr2[10]
+```
+
+####1.1.3.2 Feature Selection Forward  Search
+
+```{r, message=FALSE, warning=FALSE}
+regsubsets.out <- regsubsets(Kwh ~ ., data = merge.sel, nvmax = 14,method = "forward")
+res <- summary(regsubsets.out)
+```
+Statistics:
+
+```{r, message=FALSE, warning=FALSE}
+plot(res$cp, main = "CP") 
+```
+```{r, message=FALSE, warning=FALSE}
+plot(regsubsets.out, scale = "adjr2", main = "Adjusted R^2")
+```
+```{r, message=FALSE, warning=FALSE}
+plot(regsubsets.out, scale = "bic", main = "BIC")
+```
+```{r, message=FALSE, warning=FALSE}
+plot(res$adjr2, main = "adj r^2")
+```
+```{r, message=FALSE, warning=FALSE}
+coef(regsubsets.out,10)
+res$adjr2[10]
+```
+
+####1.1.3.3 Feature Selection Backward Search
+
+```{r, message=FALSE, warning=FALSE}
+regsubsets.out <- regsubsets(Kwh ~ ., data = merge.sel, nvmax = 14,method = "backward")
+res <- summary(regsubsets.out)
+```
+Statistics:
+
+```{r, message=FALSE, warning=FALSE}
+plot(res$cp, main = "CP") 
+```
+```{r, message=FALSE, warning=FALSE}
+plot(regsubsets.out, scale = "adjr2", main = "Adjusted R^2")
+```
+```{r, message=FALSE, warning=FALSE}
+plot(regsubsets.out, scale = "bic", main = "BIC")
+```
+```{r, message=FALSE, warning=FALSE}
+plot(res$adjr2, main = "adj r^2")
+```
+```{r, message=FALSE, warning=FALSE}
+coef(regsubsets.out,10)
+res$adjr2[10]
+```
+
+####1.1.3.4 Feature Selection Manually selecting features
+
+```{r, message=FALSE, warning=FALSE}
+regsubsets.step <- regsubsets(Kwh~hour + month + day + Day.of.Week + weekday + PeakHour +
+                                TemperatureF + Dew_PointF + Humidity +
+                                VisibilityMPH, data = merge.sel, nvmax =14 )
+summary(regsubsets.step)
+resstep <- summary(regsubsets.step)
+```
+Statistics:
+
+```{r, message=FALSE, warning=FALSE}
+plot(res$cp, main = "CP") 
+```
+```{r, message=FALSE, warning=FALSE}
+plot(regsubsets.out, scale = "adjr2", main = "Adjusted R^2")
+```
+```{r, message=FALSE, warning=FALSE}
+plot(regsubsets.out, scale = "bic", main = "BIC")
+```
+```{r, message=FALSE, warning=FALSE}
+plot(res$adjr2, main = "adj r^2")
+```
+```{r, message=FALSE, warning=FALSE}
+coef(regsubsets.out,10)
+res$adjr2[10]
+```
+
+####1.1.4 Develop a linear model
+
+Now we Develop a linear model using variables selected from Backward approach. The model will be built using the training sample of the data. The model will be validated using the validation sample of the data.
+
+#####1.1.4.1 Split Validation
+
+Split the data into training and validation samples. We will use (train.size)% for training and (100-train.size)% for validation
+
+* set.seed(): Set the seed of R's random number generator, which is useful for creating simulations or random objects that can be reproduced.
+
+We select 80% data for training and rest 20% for the testing and validation.
+```{r, message=FALSE, warning=FALSE}
+set.seed(2017)
+train.size <- 0.8
+train.index <- sample.int(length(merge.sel$Kwh),round(length(merge.sel$Kwh)*train.size))
+train.sample <- merge.sel[train.index,]
+train.val <- merge.sel[-train.index,]
+```
+`train.sample` contains our training data and `train.val` contains our remaining validation data.
+
+Multiple regression model uses a simple formula:
+     Kwh = B0 + B1xTemperatureF + B2xPeakHour + B3xDew_PointF
+
+We will perform additional tests on training data. We will use a stepwise selection of variables by backward elimination. We will consider all possible candidate variables and eliminate one at a time.
+
+* lm():lm is used to fit linear models. It can be used to carry out regression, single stratum analysis of variance and analysis of co-variance.
+
+```{r, message=FALSE, warning=FALSE}
+fit <- lm(Kwh ~ hour + month + Day.of.Week + weekday + PeakHour + TemperatureF + Dew_PointF +
+                Humidity + Sea_Level_PressureIn + VisibilityMPH , data = train.sample)
+```
+
+By cheeking the summary of `fit` we would get to know the fit of our linear model.
+```{r, message=FALSE, warning=FALSE}
+summary(fit)
+```
+
+By plotting `fit` it provide checks for heteroscedasticity, normality, and influential observations.
+
+Residuals vs Fitted:
+This plot shows if residuals have non-linear patterns. There could be a non-linear relationship between predictor variables and an outcome variable and the pattern could show up in this plot if the model doesn't capture the non-linear relationship.
+
+Normal Q-Q:
+This plot shows if residuals are normally distributed. Do residuals follow a straight line well or do they deviate severely? It's good if residuals are lined well on the straight dashed line.
+
+Scale-Location:
+It's also called Spread-Location plot. This plot shows if residuals are spread equally along the ranges of predictors. This is how you can check the assumption of equal variance (homoscedasticity). It's good if you see a horizontal line with equally (randomly) spread points.
+
+Residuals vs Leverage:
+This plot helps us to find influential cases (i.e., subjects) if any. Not all outliers are influential in linear regression analysis (whatever outliers mean).
+
+```{r, message=FALSE, warning=FALSE}
+plot(fit)
+```
+
+Lets check the distribution of errors around the model using car library. 
+* car library: It is used to compute Correlation and Linear Regression.
+```{r, message=FALSE, warning=FALSE}
+library(car)
+```
+
+Let us check the correlation and regression for `fit`.
+
+```{r, message=FALSE, warning=FALSE}
+car::crPlots(fit)
+```
+
+Red Line is the model and green line shows the fit of the variables.
+
+Cook's distance is useful for identifying outliers in the X values (observations for predictor variables). It also shows the influence of each observation on the fitted response values. An observation with Cook's distance larger than three times the mean Cook's distance might be an outlier.
+
+```{r, message=FALSE, warning=FALSE}
+# Cook's D plot, cutoff as 4/(n-k-1)
+cutoff <- 4/((nrow(train.sample)-length(fit$coefficients)-2))
+# Identify D values > cutoff
+plot(fit,which=4, cook.levels = cutoff) 
+# Check, how important are these observations for the construction of the model
+plot(fit,which=5, cook.levels = cutoff) 
+```
+
+After removing the not fitting values we will again check for fit our model.
+
+```{r, message=FALSE, warning=FALSE}
+fit <- lm(Kwh ~ hour + month + Day.of.Week + weekday + PeakHour + TemperatureF + Dew_PointF +
+                Humidity + Sea_Level_PressureIn + VisibilityMPH , data = train.sample)
+```
+
+Checking the summary of `fit` again, we would get to know the new fit of our linear model.
+
+```{r, message=FALSE, warning=FALSE}
+summary(fit)
+```
+
+Also checking the correlation and regression for `fit`.
+
+```{r, message=FALSE, warning=FALSE}
+car::crPlots(fit)
+```
+
+Plotting Cook's D plot to recheck the fit.
+
+```{r, message=FALSE, warning=FALSE}
+# Cook's D plot, cutoff as 4/(n-k-1)
+cutoff <- 4/((nrow(train.sample)-length(fit$coefficients)-2))
+# Identify D values > cutoff
+plot(fit,which=4, cook.levels = cutoff) 
+# Check, how important are these observations for the construction of the model
+plot(fit,which=5, cook.levels = cutoff) 
+# By observing above plots, we remove the records which are indicated to be not fitting.
+train.sample <- train.sample[-which(rownames(train.sample) %in% c("1062","117","8170")),]
+```
+
+Now one more time we are curious to know fit, so lets use lm()
+
+```{r, message=FALSE, warning=FALSE}
+fit <- lm(Kwh ~ hour + month + Day.of.Week + weekday + PeakHour + TemperatureF + Dew_PointF +                      Humidity + Sea_Level_PressureIn + VisibilityMPH , data = train.sample)
+```
+
+We print the final Print the Regression Coefficients. 
+```{r, message=FALSE, warning=FALSE}
+summary(fit) #R-squared:  0.5646,	Adjusted R-squared:  0.5639
+```
+
+We can see that we managed to increase adjusted r square value by 1% which is very insignificant.
+
+Now we can evaluate the final linear model. We will find all predicted values for both a training and a validation set.
+
+```{r, message=FALSE, warning=FALSE}
+
+trainPred = subset(train.sample, select = -c(Kwh))
+validPred = subset(train.val, select = -c(Kwh))
+train.sample$Pred.Kwh <- predict(fit, newdata = trainPred)
+train.val$Pred.Kwh <- predict(fit, newdata = validPred)
+```
+
+Check how good is the model on the training set ~ correlation^2,RME, MAE and MAPE
+
+```{r, message=FALSE, warning=FALSE}
+val.corr <- round(cor(train.sample$Pred.Kwh,train.sample$Kwh),2)
+val.corr
+```
+
+Lets check the data on how exactly has it predicted the Kwh values.
+```{r, message=FALSE, warning=FALSE}
+head(train.sample[,c("Kwh","Pred.Kwh")])
+```
+
+As we can see there is high correlation between actual and predicted. Lets calculate other parameters for the model.
+Note:Bringing back the transformed kwH with reverse transformation.
+
+```{r, message=FALSE, warning=FALSE}
+accuracy(10^train.val$Pred.Kwh, 10^train.val$Kwh)
+write.csv(accuracy(10^train.val$Pred.Kwh, 10^train.val$Kwh), 
+          file = "PerformanceMetrics_split.csv")
+```
+
+We will also print coefficients of our model
+
+```{r, message=FALSE, warning=FALSE}
+coef(fit)
+write.csv(coef(fit),file = "RegressionOutputs.csv")
+```
+
+We have processed our model using split validation, we can use cross validation to check for better results.
+
+#####1.1.4.2 Cross Validation
+Cross-validation is one of the most widely-used method for model selection, and for choosing tuning parameter values. It calculates the estimated K-fold cross-validation prediction error for generalized linear models.
+
+* caret library: The caret package (short for classification and regression training) contains functions to streamline the model training process for complex regression and classification problems.
+* klaR library: Miscellaneous functions for classification and visualization.
+```{r, message=FALSE, warning=FALSE}
+library(caret)
+library(klaR)
+```
+
+We set the 80% of data as train data `train.sample` and test data as `train.val`.
+
+```{r, message=FALSE, warning=FALSE}
+train.size <- 0.8
+train.index <- sample.int(length(merge.sel$Kwh),round(length(merge.sel$Kwh)*train.size))
+train.sample <- merge.sel[train.index,]
+train.val <- merge.sel[-train.index,]
+```
+
+We now control the training data.
+
+* trainControl(): To modify the resampling method, a trainControl function is used. K is controlled by the number argument and defaults to 10
+```{r, message=FALSE, warning=FALSE}
+train_control <- trainControl(method="cv", number=3)
+```
+
+Lets train the model now.
+
+```{r, message=FALSE, warning=FALSE}
+model <- train(Kwh ~ hour + month + Day.of.Week + weekday + PeakHour + TemperatureF + Dew_PointF +
+                 Humidity + Sea_Level_PressureIn + VisibilityMPH , data = train.sample,
+               trControl=train_control,method = "lm")
+```
+
+We summarize results to have look at our model.
+
+```{r, message=FALSE, warning=FALSE}
+print(model)
+```
+
+We now pridict the `Kwh` values using this model
+
+```{r, message=FALSE, warning=FALSE}
+
+trainPred = subset(train.sample, select = -c(Kwh))
+validPred = subset(train.val, select = -c(Kwh))
+train.sample$Pred.Kwh <- predict(model, newdata = trainPred)
+train.val$Pred.Kwh <- predict(model, newdata = validPred)
+```
+
+We will now check the accuracy of our prediction.
+
+```{r, message=FALSE, warning=FALSE}
+accuracy(10^train.val$Pred.Kwh, 10^train.val$Kwh)
+write.csv(accuracy(10^train.val$Pred.Kwh, 10^train.val$Kwh), 
+          file = "PerformanceMetrics_cross.csv")
+```
+
+We can see that accuracy has ben improved compared to split validation.
